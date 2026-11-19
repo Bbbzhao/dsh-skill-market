@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-market",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "dsh 技能市场：聚合 SkillHub + ClawHub 双源搜索技能，站内 README 预览，一键安装/卸载，聊天栏技能选择器（带详情卡），入口二选一（技能中心标签页 / 侧边栏左下角）",
   "type": "module",
   "main": "src/index.js",

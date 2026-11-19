@@ -266,13 +266,18 @@ const click = (el) => act(async () => { el.dispatchEvent(new window.MouseEvent("
   assert.ok(infoBtn, "info icon on the right of the row");
   act(() => infoBtn.dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true })));
   await tick();
-  const tip = inputHost.querySelector(".dsh-sh-tip");
+  // The card is portalled to <body> on purpose: inside the composer any
+  // transformed/clipped ancestor re-anchors a position:fixed child.
+  const tip = document.querySelector(".dsh-sh-tip");
   assert.ok(tip, "hovering ⓘ shows the detail card");
+  assert.ok(!inputHost.contains(tip), "detail card escapes the composer box");
+  assert.strictEqual(tip.style.position || window.getComputedStyle(tip).position, "fixed",
+    "detail card stays viewport-anchored");
   assert.ok(tip.textContent.includes("中文公文写作"), "detail card shows the skill name");
   assert.ok(tip.textContent.includes("来源"), "detail card lists meta rows");
   act(() => infoBtn.dispatchEvent(new window.MouseEvent("mouseout", { bubbles: true })));
   await tick();
-  assert.strictEqual(inputHost.querySelector(".dsh-sh-tip"), null, "detail card hidden on mouse leave");
+  assert.strictEqual(document.querySelector(".dsh-sh-tip"), null, "detail card hidden on mouse leave");
   act(() => inputRoot.unmount());
 
   // closing the panel drops the tab
@@ -285,5 +290,5 @@ const click = (el) => act(async () => { el.dispatchEvent(new window.MouseEvent("
   process.exit(0); // the plugin keeps a host-watch interval alive
 })().catch((err) => {
   console.error("FAIL —", err && (err.stack || err.message));
-  process.exitCode = 1;
+  process.exit(1); // plugin intervals would otherwise keep the loop alive
 });

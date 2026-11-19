@@ -143,6 +143,11 @@ Configurable in `cordis.patch.yml`:
 
 ## Changelog
 
+### 1.2.1
+
+- Fix: hovering the picker's ⓘ scattered the detail card across the page and over the editor. The card was `position: fixed` inside the composer, whose transformed/clipped ancestors re-anchor such children. It is now portalled to `<body>` and positioned in viewport coordinates, and hides on scroll/resize
+- The dropdown now fits the space actually available above the button (opening downwards when needed) instead of running off the top of the window
+
 ### 1.2.0
 
 - **Two entry points, pick one**: About → Entry position switches between "Skill Center tab" and "sidebar bottom-left"; applies immediately and is persisted (`localStorage["dsh-skill-hub:entry-mode"]`)

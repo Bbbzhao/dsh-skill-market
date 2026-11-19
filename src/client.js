@@ -326,6 +326,7 @@ window.__ModuleLoader__.load({
   border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,0.2); z-index: 100;
   color: #1a1a2e;
 }
+.dsh-sh-quick-pick.down { bottom: auto; top: 100%; margin-bottom: 0; margin-top: 4px; }
     .dsh-sh-quick-pick-item {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 10px 8px 12px; cursor: pointer; border-radius: 4px; margin: 1px;
@@ -1187,6 +1188,7 @@ window.__ModuleLoader__.load({
       var _c = useState(""), keyword = _c[0], setKeyword = _c[1];
       var _d = useState([]), skills = _d[0], setSkills = _d[1];
       var _e = useState(false), loading = _e[0], setLoading = _e[1];
+      var _p = useState({ down: false, maxHeight: 320 }), placement = _p[0], setPlacement = _p[1];
       var api = useMemo(function() { return makeApi(rpc); }, [rpc]);
       var containerRef = useRef(null);
       var searchTimer = useRef(null);
@@ -1248,6 +1250,34 @@ window.__ModuleLoader__.load({
 
       var _t = useState(null), tip = _t[0], setTip = _t[1];
 
+      // Fit the dropdown into the space the composer actually leaves above (or
+      // below) the button — a fixed 320px box ran off the top of the window.
+      var measurePlacement = function() {
+        var next = { down: false, maxHeight: 320 };
+        try {
+          var el = containerRef.current;
+          if (!el) return next;
+          var rect = el.getBoundingClientRect();
+          var vh = window.innerHeight || 900;
+          var above = rect.top - 12;
+          var below = vh - rect.bottom - 12;
+          if (above < 220 && below > above) {
+            next.down = true;
+            next.maxHeight = Math.max(140, Math.min(320, below));
+          } else {
+            next.maxHeight = Math.max(140, Math.min(320, above));
+          }
+        } catch (e) { /* measurement unavailable */ }
+        return next;
+      };
+
+      var togglePicker = function() {
+        var next = !open;
+        if (next) setPlacement(measurePlacement());
+        setTip(null);
+        setOpen(next);
+      };
+
       var selectSkill = function(skill) {
         onInsertSkill(skill);
         setOpen(false);
@@ -1255,22 +1285,37 @@ window.__ModuleLoader__.load({
         setTip(null);
       };
 
-      // Skill detail card — position: fixed, anchored to the ⓘ icon, so the
-      // picker's own scroll box can never clip it.
+      // Skill detail card — rendered through a portal on document.body and
+      // positioned with viewport coordinates, so no composer ancestor
+      // (transform / overflow / stacking context) can shift or clip it.
       var showTip = function(skill, el) {
         var box = { left: 8, top: 8 };
         try {
           var rect = el.getBoundingClientRect();
           var vw = window.innerWidth || 1200;
           var vh = window.innerHeight || 900;
-          var width = 300;
-          var left = rect.left - width - 10;
-          if (left < 8) left = Math.min(rect.right + 10, vw - width - 8);
-          var top = Math.min(Math.max(8, rect.top - 150), Math.max(8, vh - 300));
-          box = { left: Math.max(8, left), top: top };
+          var W = 300, H = 250;
+          var left = rect.left - W - 12;
+          if (left < 8) left = Math.min(vw - W - 8, rect.right + 12);
+          left = Math.max(8, Math.min(left, Math.max(8, vw - W - 8)));
+          var top = rect.top + rect.height / 2 - H / 2;
+          top = Math.max(8, Math.min(top, Math.max(8, vh - H - 8)));
+          box = { left: left, top: top };
         } catch (e) { /* measurement unavailable */ }
         setTip({ skill: skill, left: box.left, top: box.top });
       };
+
+      // A viewport-anchored card must not survive scrolling or a resize.
+      useEffect(function() {
+        if (!tip) return;
+        var hide = function() { setTip(null); };
+        window.addEventListener("scroll", hide, true);
+        window.addEventListener("resize", hide);
+        return function() {
+          window.removeEventListener("scroll", hide, true);
+          window.removeEventListener("resize", hide);
+        };
+      }, [tip]);
 
       var skillDesc = function(skill) {
         return skill.description || skill.summaryZh || skill.summary || "";
@@ -1322,13 +1367,24 @@ window.__ModuleLoader__.load({
         );
       };
 
+      // Portal the detail card to <body>: the composer sits inside transformed /
+      // clipped ancestors, where a position:fixed child is silently re-anchored
+      // (that is what scattered the card across the page).
+      var tipNode = renderTip();
+      if (tipNode && ReactDOM && typeof ReactDOM.createPortal === "function") {
+        try { tipNode = ReactDOM.createPortal(tipNode, document.body); } catch (e) { /* keep inline */ }
+      }
+
       return h("div", { ref: containerRef, style: { position: "relative" } },
         h("button", {
           className: "dsh-sh-input-btn",
-          onClick: function() { setOpen(!open); },
+          onClick: togglePicker,
           title: "选择技能"
         }, "⚡ 技能"),
-        open ? h("div", { className: "dsh-sh-quick-pick" },
+        open ? h("div", {
+          className: "dsh-sh-quick-pick" + (placement.down ? " down" : ""),
+          style: { maxHeight: placement.maxHeight + "px" }
+        },
           h("div", { style: { padding: "6px", borderBottom: "1px solid var(--dsh-border, rgba(255,255,255,0.06))" } },
             h("input", {
               style: { width: "100%", padding: "4px 8px", background: "var(--dsh-bg-input, rgba(0,0,0,0.2))", border: "1px solid var(--dsh-border, rgba(255,255,255,0.1))", borderRadius: "4px", color: "inherit", fontSize: "12px", outline: "none" },
@@ -1370,7 +1426,7 @@ window.__ModuleLoader__.load({
                   );
                 })
         ) : null,
-        renderTip()
+        tipNode
       );
     }
 
