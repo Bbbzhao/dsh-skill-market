@@ -1,11 +1,20 @@
 /**
  * dsh-skill-market — Browser half (client plugin)
  *
- * Registers three UI entry points:
- * 1. Sidebar nav entry — DOM-injected row next to 任务看板 (same pattern as
- *    @linxin666 plugins: plain DOM row, self-healing MutationObserver)
- * 2. shell.overlay — skill center panel (search/install/browse/readme)
- * 3. conversation.input.left — "技能" button in chat input bar (quick skill selector)
+ * UI entry points:
+ * 1. 「技能中心」 → 技能市场 tab — the market lives INSIDE the host's skill
+ *    center panel (@linxin666/dsh-client-ui-skill-explorer) as one more tab
+ *    next to 技能/导入/创建. The tab button and its pane are DOM-injected into
+ *    the host page (that plugin exposes no tab-extension API); React content
+ *    is rendered through a portal from the always-mounted overlay component,
+ *    so no second React root is created and the host's own state is untouched.
+ * 2. shell.overlay — fallback full-screen market panel, plus the render host
+ *    for the injected tab pane.
+ * 3. conversation.input.left — "技能" button in the chat input bar (quick picker).
+ *
+ * Fallback: when the skill center plugin is not installed, the market falls
+ * back to its old sidebar row (opens the overlay), so the feature is never
+ * unreachable.
  *
  * Uses vanilla JS + React.createElement (no build step), same pattern as 1e0zj/dsh-plugin-mall.
  * React instance obtained via require("react") from the shell's module loader.
@@ -21,6 +30,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
     var React = require("react");
+    var ReactDOM = require("react-dom");
     var h = React.createElement;
     var useState = React.useState;
     var useEffect = React.useEffect;
@@ -349,6 +359,31 @@ window.__ModuleLoader__.load({
 .dsh-skill-hub-panel.light .dsh-sh-stat-card-value { color: #111827; }
 .dsh-skill-hub-panel.light .dsh-sh-tag { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); color: #4b5563; opacity: 1; }
 .dsh-skill-hub-panel.light .dsh-sh-detail-sub { color: #6b7280; opacity: 1; }
+
+/* ── 技能中心内嵌 Tab（技能市场） ─────────────────────────── */
+/* Pane injected into the host skill-center page, next to its own tab content */
+.dsh-skill-hub-tabpane {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.dsh-skill-hub-embed-host {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column; background: transparent;
+}
+/* The modal panel re-used as a full-bleed page body (no frame of its own) */
+.dsh-skill-hub-panel.dsh-skill-hub-embed {
+  width: 100%; height: 100%; max-width: none; max-height: none;
+  border: none; border-radius: 0; box-shadow: none; background: transparent;
+}
+.dsh-skill-hub-panel.dsh-skill-hub-embed.light { background: transparent; color: inherit; }
+.dsh-skill-hub-panel.dsh-skill-hub-embed .dsh-sh-header { padding: 10px 16px 8px; }
+.dsh-skill-hub-panel.dsh-skill-hub-embed .dsh-sh-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.dsh-skill-hub-panel.dsh-skill-hub-embed .dsh-sh-cat-sidebar { padding-top: 8px; }
+/* segmented view switcher (embed mode) */
+.dsh-sh-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(127,127,127,0.14); flex-shrink: 0; }
+.dsh-sh-seg-btn { border: 0; background: transparent; color: inherit; font-family: inherit; font-size: 12px; line-height: 1.4; padding: 4px 10px; border-radius: 6px; cursor: pointer; opacity: 0.7; white-space: nowrap; }
+.dsh-sh-seg-btn:hover { opacity: 1; }
+.dsh-sh-seg-btn.active { background: rgba(127,127,127,0.26); opacity: 1; font-weight: 600; }
     `;
 
     var cssInjected = false;
@@ -682,6 +717,8 @@ window.__ModuleLoader__.load({
 
     function SkillCenterPanel(_a) {
       var rpc = _a.rpc, onClose = _a.onClose, onUseSkill = _a.onUseSkill, initialTab = _a.initialTab;
+      var variant = _a.variant || "overlay";
+      var isEmbed = variant === "embed";
       var _b = useState("market"), tab = _b[0], setTab = _b[1];
       var _c = useState(""), keyword = _c[0], setKeyword = _c[1];
       var _d = useState([]), items = _d[0], setItems = _d[1];
@@ -762,15 +799,16 @@ window.__ModuleLoader__.load({
 
       var doUse = function(skill) {
         onUseSkill(skill);
-        onClose();
+        if (onClose) onClose();
       };
 
-      // ESC to close
+      // ESC to close (overlay only — the embedded tab is closed by the host)
       useEffect(function() {
+        if (isEmbed) return;
         var handler = function(e) { if (e.key === "Escape") onClose(); };
         window.addEventListener("keydown", handler);
         return function() { window.removeEventListener("keydown", handler); };
-      }, [onClose]);
+      }, [onClose, isEmbed]);
 
       // Detect theme
       var _k = useState(false), isLight = _k[0], setIsLight = _k[1];
@@ -785,11 +823,20 @@ window.__ModuleLoader__.load({
         } catch(e) { /* fallback to dark */ }
       }, []);
 
-      return h("div", { className: "dsh-skill-hub-overlay", onClick: onClose },
-        h("div", { className: "dsh-skill-hub-panel" + (isLight ? " light" : ""), onClick: function(e) { e.stopPropagation(); } },
+      // Compact view switcher used when embedded in the host 技能中心 tab
+      // (the host already renders the outer tab row, so no second underline).
+      var segBtn = function(id, label) {
+        return h("button", {
+          className: "dsh-sh-seg-btn" + (tab === id ? " active" : ""),
+          onClick: function() { setTab(id); setSelectedSkill(null); setKeyword(""); }
+        }, label);
+      };
+
+      return h("div", { className: isEmbed ? "dsh-skill-hub-embed-host" : "dsh-skill-hub-overlay", onClick: isEmbed ? undefined : onClose },
+        h("div", { className: "dsh-skill-hub-panel" + (isEmbed ? " dsh-skill-hub-embed" : "") + (isLight ? " light" : ""), onClick: function(e) { e.stopPropagation(); } },
           // Header
           h("div", { className: "dsh-sh-header" },
-            h("div", { className: "dsh-sh-title" }, "⚡ 技能市场"),
+            isEmbed ? null : h("div", { className: "dsh-sh-title" }, "⚡ 技能市场"),
             h("div", { className: "dsh-sh-search-wrap" },
               h("span", { className: "dsh-sh-search-icon" }, "🔍"),
               h("input", {
@@ -797,13 +844,18 @@ window.__ModuleLoader__.load({
                 placeholder: tab === "market" ? "搜索技能（支持中文）..." : "筛选已安装技能...",
                 value: keyword,
                 onChange: function(e) { setKeyword(e.target.value); },
-                autoFocus: true
+                autoFocus: !isEmbed
               })
             ),
-            h("button", { className: "dsh-sh-close", onClick: onClose, title: "关闭" }, "×")
+            isEmbed ? h("div", { className: "dsh-sh-seg" },
+              segBtn("market", "浏览"),
+              segBtn("installed", "已安装"),
+              segBtn("about", "关于")
+            ) : null,
+            isEmbed ? null : h("button", { className: "dsh-sh-close", onClick: onClose, title: "关闭" }, "×")
           ),
-          // Tabs
-          h("div", { className: "dsh-sh-tabs" },
+          // Tabs (overlay only — embedded mode uses the segmented control)
+          isEmbed ? null : h("div", { className: "dsh-sh-tabs" },
             h("button", { className: "dsh-sh-tab" + (tab === "market" ? " active" : ""), onClick: function() { setTab("market"); setSelectedSkill(null); setKeyword(""); } }, "技能市场"),
             h("button", { className: "dsh-sh-tab" + (tab === "installed" ? " active" : ""), onClick: function() { setTab("installed"); setSelectedSkill(null); setKeyword(""); } }, "已安装"),
             h("button", { className: "dsh-sh-tab" + (tab === "about" ? " active" : ""), onClick: function() { setTab("about"); setSelectedSkill(null); } }, "关于")
@@ -1149,35 +1201,321 @@ window.__ModuleLoader__.load({
       };
     }
 
+    // ── 技能中心：注入「技能市场」Tab ─────────────────────────────────
+    // The host skill center (@linxin666/dsh-client-ui-skill-explorer) renders a
+    // `[data-dsh-part="tab-bar"]` tablist followed by its own content element,
+    // and exposes no API for third-party tabs. This section therefore injects
+    // exactly two nodes into that page — one tab button and one empty pane —
+    // and leaves the host's React tree untouched:
+    //   • tab bar gains <button role="tab" data-dsh-skillhub-tab="market">
+    //   • panel gains <div class="dsh-skill-hub-tabpane"> right after the host
+    //     content; while our tab is active the host content is display:none
+    //   • the market UI itself is rendered by a React portal owned by the
+    //     always-mounted shell.overlay component (no second React root)
+    // A debounced observer only re-inserts the two nodes if React drops them.
+
+    var MARKET_TAB_PAGE = '[data-dsh-skill-explorer-view]';
+    var MARKET_TAB_BAR = '[data-dsh-part="tab-bar"]';
+    var MARKET_TAB_TAB = '[data-dsh-part="tab"]';
+    var MARKET_TAB_ATTR = 'data-dsh-skillhub-tab';
+
+    /** Bridge between the DOM injector and the React portal host. */
+    var marketTab = {
+      container: null,   // pane element to portal into (null = page closed)
+      active: false,     // our tab is the visible one
+      mounted: false,    // the embedded panel has been opened at least once
+      version: 0,
+      listeners: []
+    };
+
+    function setMarketTab(patch) {
+      var changed = false;
+      if ("container" in patch && patch.container !== marketTab.container) { marketTab.container = patch.container; changed = true; }
+      if ("active" in patch && patch.active !== marketTab.active) { marketTab.active = patch.active; changed = true; }
+      if ("mounted" in patch && patch.mounted !== marketTab.mounted) { marketTab.mounted = patch.mounted; changed = true; }
+      if (!changed) return;
+      marketTab.version++;
+      var listeners = marketTab.listeners.slice();
+      for (var i = 0; i < listeners.length; i++) { try { listeners[i](); } catch (e) { /* ignore */ } }
+    }
+
+    /** Re-render the portal host whenever the injected tab changes state. */
+    function useMarketTab() {
+      var _s = useState(0), setVersion = _s[1];
+      useEffect(function () {
+        var bump = function () { setVersion(function (v) { return v + 1; }); };
+        marketTab.listeners.push(bump);
+        return function () {
+          var i = marketTab.listeners.indexOf(bump);
+          if (i >= 0) marketTab.listeners.splice(i, 1);
+        };
+      }, []);
+      return marketTab;
+    }
+
+    /** True when the host skill center registered its panel seat. */
+    function skillExplorerInstalled(ctx) {
+      try {
+        var entries = ctx.slots.entries("main") || [];
+        for (var i = 0; i < entries.length; i++) {
+          var opts = entries[i] && entries[i].options;
+          if (opts && opts.key === "skill-explorer") return true;
+        }
+      } catch (e) { /* entries() unavailable on older hosts */ }
+      return false;
+    }
+
+    /**
+     * Inject the 技能市场 tab into the host skill center and keep it attached.
+     * @param onFallback - called once if the host page shows up but its tab bar
+     *   cannot be found (host markup changed) so the market stays reachable
+     * @returns disposer removing both nodes, listeners and observers
+     */
+    function mountMarketTab(onFallback) {
+      var button = null;         // injected tab button
+      var pane = null;           // injected pane (portal target)
+      var hostContent = null;    // host content hidden while our tab is active
+      var hostActiveButton = null;
+      var tabBar = null;
+      var scheduled = null;
+      var desiredActive = false; // survives React replacing our two nodes
+      var missSince = 0;         // first moment the page had no tab bar
+
+      function hostTabs() {
+        if (!tabBar) return [];
+        return Array.prototype.slice.call(tabBar.querySelectorAll(MARKET_TAB_TAB)).filter(function (el) {
+          return !el.hasAttribute(MARKET_TAB_ATTR);
+        });
+      }
+
+      function applyVisuals() {
+        if (!pane || !hostContent) return;
+        if (button) button.setAttribute("aria-selected", desiredActive ? "true" : "false");
+        if (desiredActive) {
+          if (button) button.setAttribute("data-active", "");
+          hostContent.style.display = "none";
+          pane.style.display = "flex";
+        } else {
+          if (button) button.removeAttribute("data-active");
+          hostContent.style.display = "";
+          pane.style.display = "none";
+        }
+      }
+
+      function activate() {
+        if (!pane || !hostContent) return;
+        var tabs = hostTabs();
+        hostActiveButton = null;
+        for (var i = 0; i < tabs.length; i++) {
+          if (tabs[i].hasAttribute("data-active")) hostActiveButton = tabs[i];
+          tabs[i].removeAttribute("data-active");
+        }
+        desiredActive = true;
+        applyVisuals();
+        setMarketTab({ active: true, mounted: true });
+      }
+
+      function deactivate(clickedHostTab) {
+        desiredActive = false;
+        // When another tab was clicked React re-renders the bar on its own;
+        // re-marking the previous one only matters for a same-tab click.
+        if (clickedHostTab && hostActiveButton === clickedHostTab) {
+          clickedHostTab.setAttribute("data-active", "");
+        }
+        hostActiveButton = null;
+        applyVisuals();
+        setMarketTab({ active: false });
+      }
+
+      function buildButton() {
+        var sample = hostTabs()[0];
+        var el;
+        if (sample) {
+          el = sample.cloneNode(false); // inherit the host's exact tab styling
+          while (el.firstChild) el.removeChild(el.firstChild);
+          el.removeAttribute("id");
+          el.removeAttribute("aria-controls");
+        } else {
+          el = document.createElement("button");
+          el.type = "button";
+          el.className = "dsh-sh-tab";
+        }
+        el.removeAttribute("data-active");
+        el.removeAttribute("aria-selected");
+        el.setAttribute("role", "tab");
+        el.setAttribute("data-dsh-part", "tab");
+        el.setAttribute(MARKET_TAB_ATTR, "market");
+        el.setAttribute("title", "技能市场：搜索 / 安装 SkillHub 与 ClawHub 技能");
+        el.textContent = "技能市场";
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!marketTab.active) activate();
+        });
+        return el;
+      }
+
+      function onTabBarClick(e) {
+        var el = e.target;
+        if (!el || !el.closest) return;
+        var tab = el.closest(MARKET_TAB_TAB);
+        if (!tab || tab.hasAttribute(MARKET_TAB_ATTR)) return; // our own tab
+        if (marketTab.active) deactivate(tab);
+      }
+
+      function ensure() {
+        var page = document.querySelector(MARKET_TAB_PAGE);
+        if (!page) {
+          missSince = 0;
+          if (pane || tabBar) {
+            if (tabBar) tabBar.removeEventListener("click", onTabBarClick, true);
+            button = null; pane = null; hostContent = null; tabBar = null;
+            hostActiveButton = null; desiredActive = false;
+            setMarketTab({ container: null, active: false, mounted: false });
+          }
+          return;
+        }
+        var nextBar = page.querySelector(MARKET_TAB_BAR);
+        if (!nextBar) {
+          // Host page mounted but its tab bar is missing/renamed: keep the
+          // market reachable through the sidebar row instead of losing it.
+          if (!missSince) missSince = Date.now();
+          else if (onFallback && Date.now() - missSince > 4000) {
+            var fallback = onFallback;
+            onFallback = null;
+            try { fallback(); } catch (e) { /* ignore */ }
+          }
+          return;
+        }
+        missSince = 0;
+        var content = nextBar.nextElementSibling;
+        if (!content) return;
+
+        // Keep the pane node itself when React only drops it from the tree:
+        // re-inserting the same element keeps the portal (and its state) alive.
+        if (!pane) {
+          pane = document.createElement("div");
+          pane.className = "dsh-skill-hub-tabpane";
+          pane.setAttribute("data-dsh-skillhub-pane", "market");
+          pane.style.display = "none";
+          content.parentNode.insertBefore(pane, content.nextSibling);
+          setMarketTab({ container: pane });
+        } else if (pane.previousElementSibling !== content || pane.parentNode !== content.parentNode) {
+          content.parentNode.insertBefore(pane, content.nextSibling);
+        }
+        hostContent = content;
+
+        if (nextBar !== tabBar) {
+          if (tabBar) tabBar.removeEventListener("click", onTabBarClick, true);
+          tabBar = nextBar;
+          tabBar.addEventListener("click", onTabBarClick, true);
+        }
+        if (!button || !button.isConnected || button.parentNode !== tabBar) {
+          if (button && button.parentNode) button.parentNode.removeChild(button);
+          button = buildButton();
+          tabBar.appendChild(button);
+        }
+        // React may have replaced our nodes while our tab was the visible one.
+        applyVisuals();
+        if (desiredActive) setMarketTab({ active: true, mounted: true });
+      }
+
+      var observer = new MutationObserver(function () {
+        if (scheduled) return;
+        scheduled = window.setTimeout(function () {
+          scheduled = null;
+          try { ensure(); } catch (e) { /* never break the host UI */ }
+        }, 80);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      try { ensure(); } catch (e) { /* host not up yet — observer will retry */ }
+
+      return function () {
+        observer.disconnect();
+        if (scheduled) { window.clearTimeout(scheduled); scheduled = null; }
+        if (tabBar) tabBar.removeEventListener("click", onTabBarClick, true);
+        if (button && button.parentNode) button.parentNode.removeChild(button);
+        if (pane && pane.parentNode) pane.parentNode.removeChild(pane);
+        button = null; pane = null; hostContent = null; tabBar = null;
+        setMarketTab({ container: null, active: false, mounted: false });
+      };
+    }
+
     // ── Plugin entry ─────────────────────────────────────────────────
-    // Design principle: this plugin NEVER modifies host UI. It does not touch
-    // the official logo, wordmark, favicon, or the label of any host-provided
-    // entry — including the host's own "技能中心" (skill explorer) row. It only
-    // adds its own, distinctly-labelled "技能市场" entry below the family block.
+    // Design principle: this plugin never rewrites host UI. The 技能市场 surface
+    // now lives inside the host's own 技能中心 panel as one extra tab; the
+    // plugin's standalone sidebar row survives only as a fallback for hosts
+    // without that panel.
 
     var inject = ["slots", "connection"];
     function apply(ctx) {
       injectCSS();
       var rpc = ctx.get("connection").rpc;
 
-      // 1. Sidebar nav entry — DOM row after 任务看板 (task-board family pattern)
-      ctx.effect(function () {
-        var disposer = mountNavEntry(function () {
-          // Toggle overlay via custom event
-          var event = new CustomEvent("dsh-skill-hub-toggle");
-          window.dispatchEvent(event);
-        });
-        return disposer;
-      }, "dsh-skill-hub: sidebar nav entry");
+      // Back to the conversation, then seed the composer with "/<skill> ".
+      // The chat input slot listens for dsh-skill-hub-insert and calls
+      // inputActions.setDraft(); the composer may need a moment to mount.
+      var useSkillInComposer = function (skill) {
+        var name = (skill && (skill.slug || skill.name)) || "";
+        if (!name) return;
+        try {
+          var layout = ctx.get("layout");
+          if (layout && typeof layout.selectPanel === "function") layout.selectPanel(null);
+        } catch (e) { /* layout unavailable */ }
+        var tries = 0;
+        var attempt = function () {
+          var areas = document.querySelectorAll("textarea");
+          for (var i = 0; i < areas.length; i++) {
+            if (areas[i].offsetParent !== null) {
+              window.dispatchEvent(new CustomEvent("dsh-skill-hub-insert", { detail: { skill: name } }));
+              return;
+            }
+          }
+          if (++tries > 15) return;
+          window.setTimeout(attempt, 100);
+        };
+        window.setTimeout(attempt, 50);
+      };
 
-      // 2. Shell overlay — the skill center panel itself
+      // Fallback entry — used when the host has no skill center, and when its
+      // tab bar cannot be found (host markup changed). Idempotent.
+      var fallbackRow = null;
+      var openFallbackRow = function () {
+        if (fallbackRow) return;
+        try {
+          fallbackRow = mountNavEntry(function () {
+            window.dispatchEvent(new CustomEvent("dsh-skill-hub-toggle"));
+          });
+        } catch (e) { /* sidebar not ready */ }
+      };
+
+      // 1. 技能中心 → 技能市场 tab
+      ctx.effect(function () {
+        return mountMarketTab(openFallbackRow);
+      }, "dsh-skill-hub: skill-center tab");
+
+      // 1b. No skill center installed → keep a sidebar row so the market stays
+      // reachable (opens the overlay panel).
+      ctx.effect(function () {
+        var timer = window.setTimeout(function () {
+          if (skillExplorerInstalled(ctx)) return;
+          if (document.querySelector('[data-dsh-panel-entry="skill-explorer"]')) return;
+          openFallbackRow();
+        }, 4000);
+        return function () {
+          window.clearTimeout(timer);
+          if (fallbackRow) { fallbackRow(); fallbackRow = null; }
+        };
+      }, "dsh-skill-hub: sidebar fallback entry");
+
+      // 2. Shell overlay — fallback panel + render host for the injected tab
       ctx.effect(function () {
         return ctx.slots.inject("shell.overlay", function () {
           return ctx.slots.register({
             name: "shell.overlay",
             id: "skill-hub",
             order: 30,
-            inject: function () { return { rpc: rpc }; }
+            inject: function () { return { rpc: rpc, onUseSkill: useSkillInComposer }; }
           }, SkillHubOverlay);
         });
       }, "dsh-skill-hub: overlay");
@@ -1231,6 +1569,7 @@ window.__ModuleLoader__.load({
       var _a = useState(false), open = _a[0], setOpen = _a[1];
       var _b = useState("market"), initialTab = _b[0], setInitialTab = _b[1];
       var rpc = props.rpc;
+      var tab = useMarketTab();
 
       useEffect(function() {
         var toggleHandler = function() { setOpen(function(prev) { return !prev; }); };
@@ -1273,9 +1612,7 @@ window.__ModuleLoader__.load({
         };
       }, []);
 
-      if (!open) return null;
-
-      var onUseSkill = function(skill) {
+      var onUseSkill = props.onUseSkill || function(skill) {
         var name = skill.slug || skill.name;
         // Dispatch event — the ChatInputButton (conversation.input.left) listens
         // and calls inputActions.setDraft() to insert text into the chat input
@@ -1283,12 +1620,32 @@ window.__ModuleLoader__.load({
         window.dispatchEvent(event);
       };
 
-      return h(SkillCenterPanel, {
-        rpc: rpc,
-        onClose: function() { setOpen(false); },
-        onUseSkill: onUseSkill,
-        initialTab: initialTab
-      });
+      var overlayNode = open
+        ? h(SkillCenterPanel, {
+            rpc: rpc,
+            onClose: function() { setOpen(false); },
+            onUseSkill: onUseSkill,
+            initialTab: initialTab
+          })
+        : null;
+
+      // The 技能市场 tab injected into the host skill center. Rendered through
+      // a portal so it shares this component's React tree (no second root) and
+      // keeps its state while the user switches between host tabs. The pane is
+      // mounted on first activation and only removed when the panel closes.
+      var tabNode = (tab.container && tab.mounted)
+        ? ReactDOM.createPortal(
+            h(SkillCenterPanel, {
+              rpc: rpc,
+              variant: "embed",
+              onClose: function() {},
+              onUseSkill: onUseSkill
+            }),
+            tab.container
+          )
+        : null;
+
+      return h(React.Fragment, null, overlayNode, tabNode);
     }
 
     exports.apply = apply;

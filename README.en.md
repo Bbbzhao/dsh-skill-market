@@ -2,7 +2,7 @@
 
 [简体中文](./README.md) | **English**
 
-A skill marketplace plugin for DeepSeek Harness — aggregated search across SkillHub + ClawHub, in-app README preview, one-click install/uninstall, a chat-input skill picker, and a sidebar skill market panel.
+A skill marketplace plugin for DeepSeek Harness — aggregated search across SkillHub + ClawHub, in-app README preview, one-click install/uninstall, a chat-input skill picker, and a "Skill Market" tab inside the Skill Center.
 
 <p align="center">
   <img src="docs/screenshots/market.png" alt="Skill marketplace" width="720" />
@@ -14,22 +14,27 @@ A skill marketplace plugin for DeepSeek Harness — aggregated search across Ski
 - **One-click install/uninstall**: installs into `$DSH_HOME/skills/`, auto-discovered by skill-filesystem
 - **In-app README preview**: Markdown rendered natively in the detail view, no external redirects
 - **Star / download stats**: stars, downloads and installs shown on cards and in the detail view
-- **Skill market panel**: sidebar entry → fullscreen overlay for search, install, browse and inspect
+- **"Skill Market" tab inside the Skill Center**: no sidebar footprint any more — the entry lives in the official Skill Center panel next to Skills / Import / Create
 - **Chat-input picker**: a "⚡ Skills" button in the input bar for quick insertion of `/skill-name`
 - **Source failover**: falls back to ClawHub when SkillHub fails, and vice versa
+- **Automatic fallback**: without the Skill Center (or if its tab bar markup changes) the plugin restores a sidebar entry plus the standalone panel, so nothing is lost
 
-## Design principle: never modifies host UI
+## Design principle: only adds, never rewrites the host
 
-This plugin **only adds its own UI elements; it never touches any DSH host (official) UI**:
+This plugin **never replaces, renames or hides official DSH UI**. It does exactly two things:
+
+- **inserts** its own tab button and its own content container (`data-dsh-skillhub-tab` / `data-dsh-skillhub-pane`) into the Skill Center panel
+- while that tab is selected, temporarily sets the neighbouring host content area to `display:none`; selecting any host tab restores it immediately (display only — no DOM structure is removed or rewritten)
+
+Beyond that:
 
 - It does not replace or hide the sidebar's official whale logo or the `deepseek harness` wordmark
-- It does not modify the browser favicon
-- It does not rename or hide any host-provided entry, including the built-in "Skill Center" (skill explorer)
-- It does not use a MutationObserver to rename/replace host elements
-
-The plugin's own sidebar entry is always labelled "**Skill Market**", which is naturally distinct from the official "Skill Center" (which manages **installed** skills): one **installs** skills, the other **manages** them. If you see two identically-named entries, you are on an old version — please upgrade to `>=1.0.1`.
+- It does not modify the browser favicon, and does not rename or hide any host-provided entry, including the Skill Center itself
+- It does not use a MutationObserver to rename/replace host elements; the observer only re-inserts its own two nodes after a React re-render drops them
 
 ## Screenshots
+
+> These show the **fallback** standalone panel (used only when the Skill Center is absent). With the Skill Center installed, the same UI renders inside its "Skill Market" tab.
 
 | Marketplace | Skill detail |
 |---|---|
@@ -47,6 +52,8 @@ Chat-input skill picker:
 dsh plugin --profile web add "github:pn1024/dsh-skill-market"
 ```
 
+> Replace `--profile web` with your own profile name (usually `desktop` on the desktop app).
+
 Or install from a local path:
 
 ```bash
@@ -61,7 +68,7 @@ dsh-skill-market/
 ├── cordis.patch.yml       # plugin registration + config
 ├── src/
 │   ├── index.js           # Host side: RPC intercept (skill-hub/*)
-│   └── client.js          # Browser side: UI slot registration (sidebar/overlay/input)
+│   └── client.js          # Browser side: Skill Center tab + overlay + input bar
 ├── docs/screenshots/      # UI screenshots
 ├── LICENSE
 └── README.md
@@ -82,9 +89,9 @@ dsh-skill-market/
 
 | Slot | Description |
 |------|-------------|
-| `sidebar.footer.action` | "Skill Market" entry button in the sidebar (additive only; official entries untouched) |
-| `shell.overlay` | Fullscreen skill market panel |
+| `shell.overlay` | Always-mounted host: the fallback panel, and the React portal that renders the market UI into the Skill Center tab |
 | `conversation.input.left` | "⚡ Skills" quick picker in the chat input bar |
+| Skill Center tab | Not a slot: injects a "Skill Market" button into `[data-dsh-skill-explorer-view]`'s `[data-dsh-part="tab-bar"]` plus its own container next to the content area (falls back to a sidebar entry when the Skill Center is absent) |
 
 ## Data sources
 
@@ -107,6 +114,16 @@ Configurable in `cordis.patch.yml`:
         localSkillsDir: ''        # empty = use $DSH_HOME/skills
         preferSkillHub: true       # prefer SkillHub for users in China
 ```
+
+## Changelog
+
+### 1.1.0
+
+- **Entry moved**: the sidebar "Skill Market" row is gone; the market now lives as a "Skill Market" tab inside the official Skill Center panel (next to Skills / Import / Create)
+- Embedded layout for the tab: search box + a Browse / Installed / About segmented switcher + responsive card grid filling the panel
+- Injected nodes are re-inserted after React re-renders, keeping the selected tab active
+- Falls back to a sidebar entry + standalone panel when the Skill Center is missing, or when its tab bar cannot be found within 4s
+- "Use" now returns to the conversation first, then seeds the composer with `/skill-name`
 
 ## License
 
