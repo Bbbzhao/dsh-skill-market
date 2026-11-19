@@ -1,20 +1,25 @@
 /**
  * dsh-skill-market — Browser half (client plugin)
  *
- * UI entry points:
- * 1. 「技能中心」 → 技能市场 tab — the market lives INSIDE the host's skill
- *    center panel (@linxin666/dsh-client-ui-skill-explorer) as one more tab
- *    next to 技能/导入/创建. The tab button and its pane are DOM-injected into
- *    the host page (that plugin exposes no tab-extension API); React content
- *    is rendered through a portal from the always-mounted overlay component,
- *    so no second React root is created and the host's own state is untouched.
- * 2. shell.overlay — fallback full-screen market panel, plus the render host
- *    for the injected tab pane.
- * 3. conversation.input.left — "技能" button in the chat input bar (quick picker).
+ * UI entry points (二选一, chosen in the market panel's 关于 tab and persisted
+ * in localStorage under "dsh-skill-hub:entry-mode"):
+ * 1. "center" (default) — 「技能中心」 → 技能市场 tab: the market lives INSIDE the
+ *    host's skill center panel (@linxin666/dsh-client-ui-skill-explorer) as one
+ *    more tab next to 技能/导入/创建. The tab button and its pane are DOM-injected
+ *    into the host page (that plugin exposes no tab-extension API); React content
+ *    is rendered through a portal from the always-mounted overlay component, so no
+ *    second React root is created and the host's own state is untouched.
+ * 2. "footer" — the official `sidebar.footer.action` seat at the sidebar foot
+ *    (bottom-left, beside Settings), which opens the market as an overlay.
+ * 3. shell.overlay — the overlay market panel, plus the render host for the
+ *    injected tab pane.
+ * 4. conversation.input.left — "技能" button in the chat input bar (quick picker).
  *
- * Fallback: when the skill center plugin is not installed, the market falls
- * back to its old sidebar row (opens the overlay), so the feature is never
- * unreachable.
+ * Fallback ladder (so the market is never unreachable): no skill center plugin →
+ * footer entry; skill center registered but its page markup changed (no tab bar /
+ * no page root) → footer entry; react-dom unavailable (no portal) → footer entry.
+ * When neither react-dom nor the footer seat exists, a DOM-injected sidebar row
+ * is used as the last resort.
  *
  * Uses vanilla JS + React.createElement (no build step), same pattern as 1e0zj/dsh-plugin-mall.
  * React instance obtained via require("react") from the shell's module loader.
@@ -30,7 +35,10 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
     var React = require("react");
-    var ReactDOM = require("react-dom");
+    // Optional: only needed to portal the embedded market into the host skill
+    // center. A host that stops seeding react-dom must not break the plugin.
+    var ReactDOM = null;
+    try { ReactDOM = require("react-dom"); } catch (e) { ReactDOM = null; }
     var h = React.createElement;
     var useState = React.useState;
     var useEffect = React.useEffect;
@@ -318,9 +326,36 @@ window.__ModuleLoader__.load({
   border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,0.2); z-index: 100;
   color: #1a1a2e;
 }
-    .dsh-sh-quick-pick-item { padding: 8px 12px; cursor: pointer; border-radius: 4px; margin: 1px; }
+    .dsh-sh-quick-pick-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px 8px 12px; cursor: pointer; border-radius: 4px; margin: 1px;
+    }
     .dsh-sh-quick-pick-item:hover { background: rgba(99,102,241,0.08); }
-    .dsh-sh-quick-pick-name { font-weight: 500; font-size: 13px; }
+    .dsh-sh-quick-pick-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .dsh-sh-quick-pick-name {
+      font-weight: 500; font-size: 13px; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .dsh-sh-quick-pick-badge {
+      font-size: 10px; margin-left: 6px; padding: 0 5px; border-radius: 999px;
+      color: #818cf8; border: 1px solid rgba(129,140,248,0.45); vertical-align: 1px;
+    }
+    .dsh-sh-quick-pick-desc {
+      font-size: 11px; line-height: 1.35; color: #888;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* info affordance — hover/focus reveals the detail card below */
+    .dsh-sh-quick-pick-info {
+      flex: none; width: 20px; height: 20px; display: inline-flex;
+      align-items: center; justify-content: center; padding: 0;
+      border: 0; border-radius: 50%; background: transparent;
+      color: #8b8b95; cursor: help; opacity: 0.55; transition: opacity 0.12s;
+    }
+    .dsh-sh-quick-pick-item:hover .dsh-sh-quick-pick-info { opacity: 0.85; }
+    .dsh-sh-quick-pick-info:hover, .dsh-sh-quick-pick-info:focus-visible {
+      opacity: 1; background: rgba(99,102,241,0.14); color: #6366f1; outline: none;
+    }
+    .dsh-sh-quick-pick-info svg { display: block; width: 14px; height: 14px; }
 .dsh-sh-error { padding: 12px 20px; color: #ef4444; font-size: 13px; }
 .dsh-sh-pkg-info { font-size: 11px; opacity: 0.4; padding: 8px 20px; text-align: center; }
 
@@ -384,6 +419,70 @@ window.__ModuleLoader__.load({
 .dsh-sh-seg-btn { border: 0; background: transparent; color: inherit; font-family: inherit; font-size: 12px; line-height: 1.4; padding: 4px 10px; border-radius: 6px; cursor: pointer; opacity: 0.7; white-space: nowrap; }
 .dsh-sh-seg-btn:hover { opacity: 1; }
 .dsh-sh-seg-btn.active { background: rgba(127,127,127,0.26); opacity: 1; font-weight: 600; }
+
+/* ── 技能详情浮层（输入框技能选择器） ─────────────────────── */
+.dsh-sh-tip {
+  position: fixed; z-index: 1000; width: 300px; max-height: 264px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 11px 12px 10px; border-radius: 10px;
+  background: #ffffff; color: #1a1a2e; border: 1px solid rgba(0,0,0,0.12);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.22); pointer-events: none;
+  font-size: 12px; line-height: 1.5; text-align: left;
+}
+.dsh-sh-tip-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.dsh-sh-tip-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-sh-tip-ver { flex: none; font-size: 11px; color: #8b8b95; }
+.dsh-sh-tip-desc { color: #4b5563; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.dsh-sh-tip-empty { color: #9ca3af; }
+.dsh-sh-tip-meta { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 11px; color: #6b7280; }
+.dsh-sh-tip-key { color: #9ca3af; white-space: nowrap; }
+.dsh-sh-tip-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-sh-tip-hint { padding-top: 4px; border-top: 1px solid rgba(0,0,0,0.07); color: #9ca3af; font-size: 11px; }
+
+/* ── 入口位置设置（关于 tab） ─────────────────────────────── */
+.dsh-sh-entry-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.dsh-sh-entry-opt {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
+  padding: 9px 12px; border-radius: 9px; cursor: pointer; font-family: inherit; font-size: 13px;
+  color: inherit; background: var(--dsh-bg-input, rgba(128,128,128,0.07));
+  border: 1px solid var(--dsh-border, rgba(255,255,255,0.1));
+}
+.dsh-sh-entry-opt:hover { border-color: rgba(99,102,241,0.45); }
+.dsh-sh-entry-opt.active { border-color: #6366f1; background: rgba(99,102,241,0.12); }
+.dsh-sh-entry-opt-radio {
+  flex: none; width: 13px; height: 13px; margin-top: 3px; border-radius: 50%;
+  border: 1.5px solid currentColor; opacity: 0.45; position: relative;
+}
+.dsh-sh-entry-opt.active .dsh-sh-entry-opt-radio { opacity: 1; border-color: #6366f1; }
+.dsh-sh-entry-opt.active .dsh-sh-entry-opt-radio::after {
+  content: ""; position: absolute; inset: 3px; border-radius: 50%; background: #6366f1;
+}
+.dsh-sh-entry-opt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dsh-sh-entry-opt-label { font-size: 13px; font-weight: 550; }
+.dsh-sh-entry-opt-desc { font-size: 11.5px; opacity: 0.6; line-height: 1.45; }
+
+/* ── 侧边栏底部入口（sidebar.footer.action 官方席位） ─────── */
+.dsh-sh-footer-entry {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  height: 32px; padding: 0 8px; margin: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--dsw-alias-label-secondary, inherit);
+  font-family: inherit; font-size: 13px; cursor: pointer; text-align: left;
+}
+.dsh-sh-footer-entry:hover {
+  background: var(--dsw-alias-bg-hover, rgba(127,127,127,0.14));
+  color: var(--dsw-alias-label-primary, inherit);
+}
+.dsh-sh-footer-entry-icon {
+  display: inline-flex; width: 20px; height: 20px; flex: none;
+  align-items: center; justify-content: center;
+}
+.dsh-sh-footer-entry-icon svg { display: block; width: 17px; height: 17px; }
+.dsh-sh-footer-entry-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-sh-footer-entry-rail {
+  justify-content: center; width: 36px; height: 36px; padding: 0;
+  border-radius: 50%; margin: 0 auto;
+}
+.dsh-sh-footer-entry-rail .dsh-sh-footer-entry-label { display: none; }
     `;
 
     var cssInjected = false;
@@ -713,6 +812,77 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ── 入口模式：技能中心标签页 / 侧边栏左下角（二选一） ─────────────
+
+    /** localStorage key holding the chosen entry surface. */
+    var ENTRY_MODE_KEY = "dsh-skill-hub:entry-mode";
+
+    /** Read the persisted entry mode; "center" is the default. */
+    function readEntryMode() {
+      try {
+        var saved = window.localStorage && window.localStorage.getItem(ENTRY_MODE_KEY);
+        if (saved === "footer" || saved === "center") return saved;
+      } catch (e) { /* storage disabled */ }
+      return "center";
+    }
+
+    /** Persist the entry mode (best effort — private mode may throw). */
+    function persistEntryMode(mode) {
+      try {
+        if (window.localStorage) window.localStorage.setItem(ENTRY_MODE_KEY, mode);
+      } catch (e) { /* storage disabled */ }
+    }
+
+    /** Tiny observable so every surface re-renders when the mode changes. */
+    var entryMode = { mode: "center", listeners: [] };
+
+    /** Switch the entry surface; no-op when unchanged. */
+    function setEntryMode(mode) {
+      if (mode !== "footer") mode = "center";
+      if (entryMode.mode === mode) return;
+      entryMode.mode = mode;
+      persistEntryMode(mode);
+      var listeners = entryMode.listeners.slice();
+      for (var i = 0; i < listeners.length; i++) {
+        try { listeners[i](mode); } catch (e) { /* ignore */ }
+      }
+    }
+
+    /** Subscribe the calling component to the current entry mode. */
+    function useEntryMode() {
+      var _s = useState(entryMode.mode), mode = _s[0], setMode = _s[1];
+      useEffect(function () {
+        var listener = function (next) { setMode(next); };
+        entryMode.listeners.push(listener);
+        return function () {
+          var i = entryMode.listeners.indexOf(listener);
+          if (i >= 0) entryMode.listeners.splice(i, 1);
+        };
+      }, []);
+      return mode;
+    }
+
+    /**
+     * Footer entry seat (official `sidebar.footer.action`): a row beside the
+     * Settings button at the sidebar foot, icon-only while the rail is collapsed.
+     */
+    function SidebarFooterEntry(props) {
+      var wide = !!(props && props.wide);
+      return h("button", {
+        type: "button",
+        className: "dsh-sh-footer-entry" + (wide ? "" : " dsh-sh-footer-entry-rail"),
+        title: "技能市场：搜索 / 安装 SkillHub 与 ClawHub 技能",
+        "aria-label": "技能市场",
+        "data-dsh-part": "sidebar-footer-entry",
+        onClick: function () {
+          window.dispatchEvent(new CustomEvent("dsh-skill-hub-toggle"));
+        }
+      },
+        h("span", { className: "dsh-sh-footer-entry-icon", dangerouslySetInnerHTML: { __html: NAV_ICON } }),
+        h("span", { className: "dsh-sh-footer-entry-label" }, "技能市场")
+      );
+    }
+
     // ── Main Skill Center Panel ──────────────────────────────────────
 
     function SkillCenterPanel(_a) {
@@ -732,6 +902,7 @@ window.__ModuleLoader__.load({
       var _l = useState(""), activeCategory = _l[0], setActiveCategory = _l[1];
       var searchTimer = useRef(null);
       var api = useMemo(function() { return makeApi(rpc); }, [rpc]);
+      var entryModeValue = useEntryMode();
 
       // Apply initial tab
       useEffect(function() {
@@ -832,6 +1003,35 @@ window.__ModuleLoader__.load({
         }, label);
       };
 
+      // Entry-surface switch. Leaving 技能中心 from inside it would tear this
+      // very pane down, so first hand the market over to the overlay panel.
+      var switchEntryMode = function(next, label) {
+        if (isEmbed) {
+          try {
+            window.dispatchEvent(new CustomEvent("dsh-skill-hub-open", { detail: { tab: tab } }));
+          } catch (e) { /* overlay unavailable */ }
+        }
+        setEntryMode(next);
+        setToast({ message: "入口已切换到「" + label + "」", type: "ok" });
+      };
+
+      var entryOption = function(id, label, desc) {
+        var on = entryModeValue === id;
+        return h("button", {
+          type: "button",
+          className: "dsh-sh-entry-opt" + (on ? " active" : ""),
+          role: "radio",
+          "aria-checked": on ? "true" : "false",
+          onClick: function() { if (!on) switchEntryMode(id, label); }
+        },
+          h("span", { className: "dsh-sh-entry-opt-radio", "aria-hidden": "true" }),
+          h("span", { className: "dsh-sh-entry-opt-text" },
+            h("span", { className: "dsh-sh-entry-opt-label" }, label),
+            h("span", { className: "dsh-sh-entry-opt-desc" }, desc)
+          )
+        );
+      };
+
       return h("div", { className: isEmbed ? "dsh-skill-hub-embed-host" : "dsh-skill-hub-overlay", onClick: isEmbed ? undefined : onClose },
         h("div", { className: "dsh-skill-hub-panel" + (isEmbed ? " dsh-skill-hub-embed" : "") + (isLight ? " light" : ""), onClick: function(e) { e.stopPropagation(); } },
           // Header
@@ -889,6 +1089,17 @@ window.__ModuleLoader__.load({
                     h("p", null, "2. 点击「安装」一键下载到本地"),
                     h("p", null, "3. 安装后点击「使用」或在输入栏输入 /技能名 调用"),
                     h("p", null, "4. 在「已安装」查看/卸载已装技能")
+                  ),
+                  h("div", { className: "dsh-sh-detail-section" },
+                    h("div", { className: "dsh-sh-detail-section-title" }, "入口位置"),
+                    h("p", { style: { opacity: 0.7, margin: 0 } }, "二选一，切换后立即生效，并记住本机的选择。"),
+                    h("div", { className: "dsh-sh-entry-opts", role: "radiogroup", "aria-label": "技能市场入口位置" },
+                      entryOption("center", "技能中心标签页", "在「技能中心」里与 技能 / 导入 / 创建 并列作为一个标签页"),
+                      entryOption("footer", "侧边栏左下角", "在左侧栏底部、设置按钮旁固定一个「技能市场」入口")
+                    ),
+                    entryModeValue === "footer"
+                      ? h("p", { style: { opacity: 0.55, marginTop: 8, marginBottom: 0 } }, "当前：入口在左下角点击后以浮层打开。")
+                      : h("p", { style: { opacity: 0.55, marginTop: 8, marginBottom: 0 } }, "当前：入口在「技能中心」内的「技能市场」标签页。")
                   )
                 );
               }
@@ -967,6 +1178,9 @@ window.__ModuleLoader__.load({
 
     // ── Chat input button (quick skill picker) ───────────────────────
 
+    /** ⓘ — "details available" affordance on the right of each picker row. */
+    var INFO_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="8" cy="8" r="6.1"/><path d="M8 7.2v4.1" stroke-linecap="round"/><circle cx="8" cy="4.55" r="0.85" fill="currentColor" stroke="none"/></svg>';
+
     function ChatInputButton(_a) {
       var rpc = _a.rpc, onInsertSkill = _a.onInsertSkill;
       var _b = useState(false), open = _b[0], setOpen = _b[1];
@@ -1032,10 +1246,80 @@ window.__ModuleLoader__.load({
         return function() { document.removeEventListener("mousedown", handler); };
       }, [open]);
 
+      var _t = useState(null), tip = _t[0], setTip = _t[1];
+
       var selectSkill = function(skill) {
         onInsertSkill(skill);
         setOpen(false);
         setKeyword("");
+        setTip(null);
+      };
+
+      // Skill detail card — position: fixed, anchored to the ⓘ icon, so the
+      // picker's own scroll box can never clip it.
+      var showTip = function(skill, el) {
+        var box = { left: 8, top: 8 };
+        try {
+          var rect = el.getBoundingClientRect();
+          var vw = window.innerWidth || 1200;
+          var vh = window.innerHeight || 900;
+          var width = 300;
+          var left = rect.left - width - 10;
+          if (left < 8) left = Math.min(rect.right + 10, vw - width - 8);
+          var top = Math.min(Math.max(8, rect.top - 150), Math.max(8, vh - 300));
+          box = { left: Math.max(8, left), top: top };
+        } catch (e) { /* measurement unavailable */ }
+        setTip({ skill: skill, left: box.left, top: box.top });
+      };
+
+      var skillDesc = function(skill) {
+        return skill.description || skill.summaryZh || skill.summary || "";
+      };
+
+      var tipRows = function(skill) {
+        var rows = [];
+        var src = skill.source === "clawhub" ? "ClawHub"
+          : skill.source === "skillhub" ? "SkillHub"
+          : (skill.installed ? "本地技能" : "");
+        if (src) rows.push(["来源", src]);
+        if (skill.author) rows.push(["作者", skill.author]);
+        if (skill.downloads) rows.push(["下载", formatCount(skill.downloads)]);
+        if (skill.stars) rows.push(["收藏", formatCount(skill.stars)]);
+        if (skill.whenToUse) rows.push(["适用", skill.whenToUse]);
+        if (skill.installed && (skill.dirName || skill.dir)) rows.push(["目录", skill.dirName || skill.dir]);
+        return rows;
+      };
+
+      var renderTip = function() {
+        if (!tip || !tip.skill) return null;
+        var skill = tip.skill;
+        var name = skill.displayName || skill.name || skill.slug;
+        var desc = skillDesc(skill);
+        var rows = tipRows(skill);
+        return h("div", {
+          className: "dsh-sh-tip",
+          role: "tooltip",
+          style: { left: tip.left + "px", top: tip.top + "px" }
+        },
+          h("div", { className: "dsh-sh-tip-head" },
+            h("span", { className: "dsh-sh-tip-title" }, name),
+            skill.version ? h("span", { className: "dsh-sh-tip-ver" }, "v" + skill.version) : null
+          ),
+          desc
+            ? h("div", { className: "dsh-sh-tip-desc" }, desc)
+            : h("div", { className: "dsh-sh-tip-desc dsh-sh-tip-empty" }, "该技能没有填写描述"),
+          rows.length
+            ? h("div", { className: "dsh-sh-tip-meta" },
+                rows.map(function(row) {
+                  return h(React.Fragment, { key: row[0] },
+                    h("span", { className: "dsh-sh-tip-key" }, row[0]),
+                    h("span", { className: "dsh-sh-tip-val", title: row[1] }, row[1])
+                  );
+                })
+              )
+            : null,
+          h("div", { className: "dsh-sh-tip-hint" }, "点击整行插入 /" + (skill.slug || skill.name) + " 到输入框")
+        );
       };
 
       return h("div", { ref: containerRef, style: { position: "relative" } },
@@ -1059,18 +1343,34 @@ window.__ModuleLoader__.load({
             : skills.length === 0
               ? h("div", { style: { padding: "12px", textAlign: "center", opacity: 0.5 } }, keyword ? "未找到匹配技能" : "暂无技能")
               : skills.slice(0, 20).map(function(skill) {
+                  var desc = skillDesc(skill);
                   return h("div", {
                     key: skill.slug || skill.name,
                     className: "dsh-sh-quick-pick-item",
                     onClick: function() { selectSkill(skill); }
                   },
-                    h("div", { className: "dsh-sh-quick-pick-name" },
-                      (skill.displayName || skill.name),
-                      skill.installed ? h("span", { style: { fontSize: "10px", marginLeft: "6px", color: "#818cf8" } }, "已安装") : null
+                    h("div", { className: "dsh-sh-quick-pick-main" },
+                      h("div", { className: "dsh-sh-quick-pick-name" },
+                        (skill.displayName || skill.name),
+                        skill.installed ? h("span", { className: "dsh-sh-quick-pick-badge" }, "已安装") : null
+                      ),
+                      desc ? h("div", { className: "dsh-sh-quick-pick-desc", title: desc }, desc) : null
                     ),
+                    h("button", {
+                      type: "button",
+                      className: "dsh-sh-quick-pick-info",
+                      "aria-label": "技能详情",
+                      title: "查看技能详情",
+                      onMouseEnter: function(e) { showTip(skill, e.currentTarget); },
+                      onMouseLeave: function() { setTip(null); },
+                      onFocus: function(e) { showTip(skill, e.currentTarget); },
+                      onBlur: function() { setTip(null); },
+                      onClick: function(e) { e.stopPropagation(); }
+                    }, h("span", { dangerouslySetInnerHTML: { __html: INFO_ICON } }))
                   );
                 })
-        ) : null
+        ) : null,
+        renderTip()
       );
     }
 
@@ -1434,9 +1734,22 @@ window.__ModuleLoader__.load({
         observer.disconnect();
         if (scheduled) { window.clearTimeout(scheduled); scheduled = null; }
         if (tabBar) tabBar.removeEventListener("click", onTabBarClick, true);
+        // Our tab may be the visible one: hand the host panel back before the
+        // nodes disappear, otherwise its content stays display:none forever.
+        if (hostContent) {
+          try { hostContent.style.display = ""; } catch (e) { /* ignore */ }
+        }
+        if (desiredActive) {
+          try {
+            if (hostActiveButton && hostActiveButton.isConnected !== false) {
+              hostActiveButton.setAttribute("data-active", "");
+            }
+          } catch (e) { /* ignore */ }
+          desiredActive = false;
+        }
         if (button && button.parentNode) button.parentNode.removeChild(button);
         if (pane && pane.parentNode) pane.parentNode.removeChild(pane);
-        button = null; pane = null; hostContent = null; tabBar = null;
+        button = null; pane = null; hostContent = null; tabBar = null; hostActiveButton = null;
         setMarketTab({ container: null, active: false, mounted: false });
       };
     }
@@ -1477,36 +1790,140 @@ window.__ModuleLoader__.load({
         window.setTimeout(attempt, 50);
       };
 
-      // Fallback entry — used when the host has no skill center, and when its
-      // tab bar cannot be found (host markup changed). Idempotent.
-      var fallbackRow = null;
-      var openFallbackRow = function () {
-        if (fallbackRow) return;
-        try {
-          fallbackRow = mountNavEntry(function () {
-            window.dispatchEvent(new CustomEvent("dsh-skill-hub-toggle"));
-          });
-        } catch (e) { /* sidebar not ready */ }
+      // ── Entry surface coordinator ───────────────────────────────────
+      // center (default): the tab injected into 技能中心. Whenever that cannot
+      //   work (no skill center, host markup changed, react-dom missing) a
+      //   footer entry takes over, so the market is never unreachable.
+      // footer: only the official sidebar.footer.action seat (bottom-left).
+      entryMode.mode = readEntryMode();
+      var canPortal = !!(ReactDOM && ReactDOM.createPortal);
+      if (!canPortal && entryMode.mode === "center") {
+        entryMode.mode = "footer";
+        persistEntryMode("footer");
+      }
+
+      var tabDisposer = null;
+      var footerDisposer = null;
+      var domRow = null;
+      var stopped = false;
+
+      var openOverlay = function () {
+        window.dispatchEvent(new CustomEvent("dsh-skill-hub-toggle"));
       };
 
-      // 1. 技能中心 → 技能市场 tab
-      ctx.effect(function () {
-        return mountMarketTab(openFallbackRow);
-      }, "dsh-skill-hub: skill-center tab");
+      // Last resort when no sidebar slot can be claimed.
+      var openDomRow = function () {
+        if (domRow) return;
+        try { domRow = mountNavEntry(openOverlay); } catch (e) { domRow = null; }
+      };
 
-      // 1b. No skill center installed → keep a sidebar row so the market stays
-      // reachable (opens the overlay panel).
+      // Official seat beside Settings, at the sidebar foot (bottom-left).
+      var openFooterEntry = function () {
+        if (footerDisposer) return;
+        try {
+          footerDisposer = ctx.slots.inject("sidebar.footer.action", function () {
+            return ctx.slots.register({
+              name: "sidebar.footer.action",
+              id: "skill-hub",
+              order: 20
+            }, SidebarFooterEntry);
+          });
+        } catch (e) {
+          footerDisposer = null;
+          openDomRow();
+        }
+      };
+
+      var closeFooterEntry = function () {
+        if (!footerDisposer) return;
+        try { footerDisposer(); } catch (e) { /* ignore */ }
+        footerDisposer = null;
+      };
+
+      var closeTab = function () {
+        if (!tabDisposer) return;
+        try { tabDisposer(); } catch (e) { /* ignore */ }
+        tabDisposer = null;
+      };
+
+      var openTab = function () {
+        if (tabDisposer || !canPortal) return;
+        try {
+          tabDisposer = mountMarketTab(openFooterEntry);
+        } catch (e) {
+          tabDisposer = null;
+          openFooterEntry();
+        }
+      };
+
+      /** Reconcile both entries with the chosen mode and host capability. */
+      var syncEntry = function () {
+        if (stopped) return;
+        if (entryMode.mode === "footer" || !canPortal) {
+          closeTab();
+          openFooterEntry();
+        } else {
+          closeFooterEntry();
+          openTab();
+        }
+      };
+
+      // 1. Entry surface — mounted, torn down and swapped when the setting changes
+      ctx.effect(function () {
+        syncEntry();
+        var listener = function () { syncEntry(); };
+        entryMode.listeners.push(listener);
+        return function () {
+          stopped = true;
+          var i = entryMode.listeners.indexOf(listener);
+          if (i >= 0) entryMode.listeners.splice(i, 1);
+          closeTab();
+          closeFooterEntry();
+          if (domRow) { try { domRow(); } catch (e) { /* ignore */ } domRow = null; }
+        };
+      }, "dsh-skill-hub: entry surface");
+
+      // 1b. No skill center installed → footer entry keeps the market reachable.
       ctx.effect(function () {
         var timer = window.setTimeout(function () {
+          if (stopped || entryMode.mode !== "center") return;
           if (skillExplorerInstalled(ctx)) return;
           if (document.querySelector('[data-dsh-panel-entry="skill-explorer"]')) return;
-          openFallbackRow();
+          openFooterEntry();
         }, 4000);
+        return function () { window.clearTimeout(timer); };
+      }, "dsh-skill-hub: no-skill-center fallback");
+
+      // 1c. Host-markup watch: the panel is selected but our page marker never
+      // appears (host renamed its root). The tab injection can never succeed
+      // there, so fall back to the footer entry instead of an unreachable tab.
+      ctx.effect(function () {
+        var since = 0;
+        var timer = window.setInterval(function () {
+          if (stopped) return;
+          if (entryMode.mode === "center" && marketTab.container) {
+            if (footerDisposer) closeFooterEntry(); // injection recovered
+            since = 0;
+            return;
+          }
+          if (entryMode.mode === "footer" || footerDisposer) return;
+          if (document.querySelector(MARKET_TAB_PAGE)) return; // observer handles the tab bar
+          var selected = false;
+          try {
+            var face = ctx.get("layout");
+            var info = face && face.panelInfo;
+            var snap = info && typeof info.getSnapshot === "function" ? info.getSnapshot() : null;
+            selected = !!(snap && snap.activePanelId === "skill-explorer");
+          } catch (e) { /* older host without panelInfo */ }
+          if (!selected) { since = 0; return; }
+          if (!since) { since = Date.now(); return; }
+          if (Date.now() - since > 2000) { since = 0; openFooterEntry(); }
+        }, 1500);
         return function () {
-          window.clearTimeout(timer);
-          if (fallbackRow) { fallbackRow(); fallbackRow = null; }
+          window.clearInterval(timer);
+          if (domRow) { try { domRow(); } catch (e) { /* ignore */ } domRow = null; }
         };
-      }, "dsh-skill-hub: sidebar fallback entry");
+      }, "dsh-skill-hub: host markup watch");
 
       // 2. Shell overlay — fallback panel + render host for the injected tab
       ctx.effect(function () {
@@ -1633,7 +2050,7 @@ window.__ModuleLoader__.load({
       // a portal so it shares this component's React tree (no second root) and
       // keeps its state while the user switches between host tabs. The pane is
       // mounted on first activation and only removed when the panel closes.
-      var tabNode = (tab.container && tab.mounted)
+      var tabNode = (tab.container && tab.mounted && ReactDOM && ReactDOM.createPortal)
         ? ReactDOM.createPortal(
             h(SkillCenterPanel, {
               rpc: rpc,
